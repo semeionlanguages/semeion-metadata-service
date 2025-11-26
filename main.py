@@ -6,26 +6,36 @@ import uvicorn
 
 app = FastAPI()
 
-# Retrieve DB URL from environment variables
+# Load database URL from Render environment variables
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Connect once at startup
+# Create a single DB connection for the lifetime of the app
 conn = psycopg2.connect(DATABASE_URL)
 cursor = conn.cursor()
 
-class Request(BaseModel):
+class MetadataRequest(BaseModel):
     hash_id: str
 
 @app.post("/generate")
-async def generate(req: Request):
-    # Example: Fetch English word for debugging
-    cursor.execute("SELECT en FROM canonical_lexicon WHERE hash_id = %s", (req.hash_id,))
+async def generate(req: MetadataRequest):
+    # Fetch the English word associated with the hash_id
+    cursor.execute("""
+        SELECT en 
+        FROM canonical_lexicon
+        WHERE hash_id = %s
+    """, (req.hash_id,))
+    
     row = cursor.fetchone()
+
+    if row:
+        word_en = row[0]
+    else:
+        word_en = None
 
     return {
         "status": "ok",
         "hash_id": req.hash_id,
-        "word_en": row[0] if row else None
+        "english_word": word_en
     }
 
 if __name__ == "__main__":
