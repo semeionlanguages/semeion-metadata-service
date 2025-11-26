@@ -7,7 +7,7 @@ import uvicorn
 app = FastAPI()
 
 # Load database URL from Render environment variables
-DATABASE_URL = os.getenv("DATABASE_URL")
+DATABASE_URL = os.getenv("DATABASE_URL1")
 
 # Create a single DB connection for the lifetime of the app
 conn = psycopg2.connect(DATABASE_URL)
