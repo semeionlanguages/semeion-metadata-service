@@ -157,10 +157,12 @@ async def run_metadata_pipeline(conn):
                 updated_at = NOW()
             WHERE hash_id = %s
         """, (z, frequency, dispersion_cd, cefr, difficulty, difficulty_numeric, hash_id))
-        conn.commit()
 
-        # Progress update every 25 rows
+        # Batch commit every 25 rows instead of every row
         if idx % 25 == 0:
+            conn.commit()
+            
+            # Progress update
             cur.execute("""
                 UPDATE metadata_progress
                 SET processed = %s
@@ -170,6 +172,9 @@ async def run_metadata_pipeline(conn):
             print(f"[PIPELINE] {idx}/{total} processed...", flush=True)
 
         await asyncio.sleep(0)
+    
+    # Final commit for remaining rows
+    conn.commit()
 
 
     # Step 3 — mark job complete
