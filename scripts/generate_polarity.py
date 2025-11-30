@@ -54,11 +54,12 @@ async def run_polarity_pipeline(conn):
 
     cur = conn.cursor()
 
-    # Step 1 — find entries to update
+    # Step 1 — find entries to update (NULL or non-numeric values)
     cur.execute("""
         SELECT hash_id, en
         FROM canonical_lexicon
         WHERE polarity IS NULL
+           OR polarity::text ~ '[^0-9]'
     """)
 
     rows = cur.fetchall()
@@ -105,11 +106,10 @@ async def run_polarity_pipeline(conn):
         scores = analyzer.polarity_scores(word)
         compound = scores['compound']
 
-        # Derived fields
-        polarity = compute_polarity_label(compound)
-        polarity_numeric = compute_polarity_numeric(compound)
+        # Use raw compound score (-1 to 1)
+        polarity = compound
 
-        # Update canonical_lexicon
+        # Update canonical_lexicon with compound score
         cur.execute("""
             UPDATE canonical_lexicon
             SET 
