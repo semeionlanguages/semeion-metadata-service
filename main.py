@@ -5,23 +5,19 @@ import os
 import psycopg2
 import uvicorn
 from dotenv import load_dotenv
-import uuid
 
 # Load environment variables
 load_dotenv()
 
+# REAL IMPORT - NO PLACEHOLDER
+from scripts.generate_frequency_metrics import run_metadata_pipeline
+
 app = FastAPI(title="Semeion Metadata Service")
 
-# CORS Configuration - Allow frontend to connect
+# CORS Configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",  # Vite dev server
-        "http://localhost:3000",  # Alternative dev port
-        "http://localhost:8080",  # Self
-        "https://semeion-app.vercel.app",  # Production frontend
-        "*",  # Allow all origins (for development)
-    ],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -29,11 +25,12 @@ app.add_middleware(
 
 DATABASE_URL = os.getenv("DATABASE_URL1")
 
-# Global DB connection (do NOT recreate on each request)
+# Global DB connection
 try:
     conn = psycopg2.connect(DATABASE_URL)
+    print("[STARTUP] Database connected successfully", flush=True)
 except Exception as e:
-    print(f"Database connection failed: {e}")
+    print(f"[STARTUP] Database connection failed: {e}", flush=True)
     conn = None
 
 class MetadataRequest(BaseModel):
@@ -45,14 +42,14 @@ async def root():
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "service": "semeion-metadata-service"}
+    db_status = "connected" if conn else "disconnected"
+    return {"status": "healthy", "service": "semeion-metadata-service", "database": db_status}
 
 @app.post("/generate")
 async def generate(req: MetadataRequest):
     if not conn:
         return {"status": "error", "message": "Database not connected"}
     
-    # Create cursor per request for thread safety
     cursor = conn.cursor()
     try:
         cursor.execute("""
@@ -62,11 +59,7 @@ async def generate(req: MetadataRequest):
         """, (req.hash_id,))
         
         row = cursor.fetchone()
-
-        if row:
-            word_en = row[0]
-        else:
-            word_en = None
+        word_en = row[0] if row else None
 
         return {
             "status": "ok",
@@ -76,26 +69,26 @@ async def generate(req: MetadataRequest):
     finally:
         cursor.close()
 
+# REAL ENDPOINT - RUNS ACTUAL PYTHON SCRIPT
 @app.post("/run/metadata-pipeline")
 async def metadata_pipeline_endpoint():
     """
     Generate frequency metrics: zipf, frequency, dispersion_cd, level, difficulty, difficulty_numeric
+    RUNS THE ACTUAL SCRIPT ON REAL DATA
     """
     print("[API] Trigger received: metadata pipeline", flush=True)
     
-    # TODO: Import and call the actual pipeline when ready
-    # from scripts.generate_frequency_metrics import run_metadata_pipeline
-    # result = await run_metadata_pipeline(conn)
+    if not conn:
+        print("[API] ERROR: Database not connected", flush=True)
+        return {"status": "error", "message": "Database not connected"}
     
-    # For now, return a mock response
-    job_id = str(uuid.uuid4())
+    print("[API] Calling run_metadata_pipeline with real database connection...", flush=True)
     
-    return {
-        "status": "ok",
-        "job_id": job_id,
-        "processed": 0,
-        "message": "Frequency metrics pipeline executed successfully (placeholder)"
-    }
+    # CALL THE REAL FUNCTION
+    result = await run_metadata_pipeline(conn)
+    
+    print(f"[API] Pipeline completed: {result}", flush=True)
+    return result
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8080)
