@@ -2,11 +2,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
+import sys
 import psycopg2
 import uvicorn
 from dotenv import load_dotenv
-import subprocess
 import uuid
+import asyncio
 
 load_dotenv()
 
@@ -24,8 +25,9 @@ DATABASE_URL = os.getenv("DATABASE_URL1")
 
 try:
     conn = psycopg2.connect(DATABASE_URL)
+    print("[STARTUP] Database connected", flush=True)
 except Exception as e:
-    print(f"[ERROR] DB: {e}", flush=True)
+    print(f"[STARTUP] DB Error: {e}", flush=True)
     conn = None
 
 @app.get("/")
@@ -40,37 +42,31 @@ async def health():
 async def metadata_pipeline_endpoint():
     print("[API] === PIPELINE TRIGGERED ===", flush=True)
     
-    # Check if script exists
-    script_path = "scripts/generate_frequency_metrics.py"
-    if not os.path.exists(script_path):
-        print(f"[ERROR] Script not found: {script_path}", flush=True)
-        print(f"[ERROR] Current dir: {os.getcwd()}", flush=True)
-        print(f"[ERROR] Files: {os.listdir('.')}", flush=True)
-        return {"status": "error", "message": f"Script not found at {script_path}"}
-    
-    print(f"[API] Script found, executing...", flush=True)
+    if not conn:
+        print("[API] ERROR: No database connection", flush=True)
+        return {"status": "error", "message": "Database not connected"}
     
     try:
-        result = subprocess.run(
-            ["python", script_path],
-            capture_output=True,
-            text=True,
-            timeout=600
-        )
+        # Import the actual pipeline function
+        sys.path.insert(0, os.path.dirname(__file__))
+        from scripts.generate_frequency_metrics import run_metadata_pipeline
         
-        print(f"[API] Return code: {result.returncode}", flush=True)
-        print(f"[API] STDOUT: {result.stdout}", flush=True)
-        print(f"[API] STDERR: {result.stderr}", flush=True)
+        print("[API] Executing pipeline...", flush=True)
         
-        return {
-            "status": "ok" if result.returncode == 0 else "error",
-            "job_id": str(uuid.uuid4()),
-            "processed": "see logs",
-            "stdout": result.stdout,
-            "stderr": result.stderr
-        }
+        # IMPORTANT: Call with await since it's async
+        result = await run_metadata_pipeline(conn)
+        
+        print(f"[API] Pipeline completed: {result}", flush=True)
+        
+        return result
+        
+    except ImportError as e:
+        print(f"[API] Import Error: {e}", flush=True)
+        return {"status": "error", "message": f"Script import failed: {str(e)}"}
     except Exception as e:
-        print(f"[API] EXCEPTION: {str(e)}", flush=True)
+        print(f"[API] Execution Error: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
         return {"status": "error", "message": str(e)}
 
 if __name__ == "__main__":
