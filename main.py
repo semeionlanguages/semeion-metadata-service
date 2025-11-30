@@ -6,7 +6,7 @@ import psycopg2
 import uvicorn
 from dotenv import load_dotenv
 import subprocess
-import json
+import uuid
 
 load_dotenv()
 
@@ -24,13 +24,9 @@ DATABASE_URL = os.getenv("DATABASE_URL1")
 
 try:
     conn = psycopg2.connect(DATABASE_URL)
-    print("[STARTUP] Database connected successfully", flush=True)
 except Exception as e:
-    print(f"[STARTUP] Database connection failed: {e}", flush=True)
+    print(f"[ERROR] DB: {e}", flush=True)
     conn = None
-
-class MetadataRequest(BaseModel):
-    hash_id: str
 
 @app.get("/")
 async def root():
@@ -38,73 +34,43 @@ async def root():
 
 @app.get("/health")
 async def health():
-    db_status = "connected" if conn else "disconnected"
-    return {"status": "healthy", "service": "semeion-metadata-service", "database": db_status}
-
-@app.post("/generate")
-async def generate(req: MetadataRequest):
-    if not conn:
-        return {"status": "error", "message": "Database not connected"}
-    
-    cursor = conn.cursor()
-    try:
-        cursor.execute("""
-            SELECT en 
-            FROM canonical_lexicon
-            WHERE hash_id = %s
-        """, (req.hash_id,))
-        
-        row = cursor.fetchone()
-        word_en = row[0] if row else None
-
-        return {
-            "status": "ok",
-            "hash_id": req.hash_id,
-            "english_word": word_en
-        }
-    finally:
-        cursor.close()
+    return {"status": "healthy", "database": "connected" if conn else "disconnected"}
 
 @app.post("/run/metadata-pipeline")
 async def metadata_pipeline_endpoint():
-    """
-    Generate frequency metrics by running the Python script directly
-    """
-    print("[API] Trigger received: metadata pipeline", flush=True)
+    print("[API] === PIPELINE TRIGGERED ===", flush=True)
     
-    if not conn:
-        return {"status": "error", "message": "Database not connected"}
+    # Check if script exists
+    script_path = "scripts/generate_frequency_metrics.py"
+    if not os.path.exists(script_path):
+        print(f"[ERROR] Script not found: {script_path}", flush=True)
+        print(f"[ERROR] Current dir: {os.getcwd()}", flush=True)
+        print(f"[ERROR] Files: {os.listdir('.')}", flush=True)
+        return {"status": "error", "message": f"Script not found at {script_path}"}
+    
+    print(f"[API] Script found, executing...", flush=True)
     
     try:
-        # Run the script as a subprocess
-        print("[API] Running generate_frequency_metrics.py...", flush=True)
         result = subprocess.run(
-            ["python", "scripts/generate_frequency_metrics.py"],
+            ["python", script_path],
             capture_output=True,
             text=True,
-            timeout=300  # 5 minute timeout
+            timeout=600
         )
         
-        print(f"[API] Script output: {result.stdout}", flush=True)
-        if result.stderr:
-            print(f"[API] Script errors: {result.stderr}", flush=True)
+        print(f"[API] Return code: {result.returncode}", flush=True)
+        print(f"[API] STDOUT: {result.stdout}", flush=True)
+        print(f"[API] STDERR: {result.stderr}", flush=True)
         
-        if result.returncode == 0:
-            return {
-                "status": "ok",
-                "job_id": "subprocess-run",
-                "processed": "check logs",
-                "message": "Script executed successfully",
-                "output": result.stdout
-            }
-        else:
-            return {
-                "status": "error",
-                "message": f"Script failed with code {result.returncode}",
-                "error": result.stderr
-            }
+        return {
+            "status": "ok" if result.returncode == 0 else "error",
+            "job_id": str(uuid.uuid4()),
+            "processed": "see logs",
+            "stdout": result.stdout,
+            "stderr": result.stderr
+        }
     except Exception as e:
-        print(f"[API] ERROR: {str(e)}", flush=True)
+        print(f"[API] EXCEPTION: {str(e)}", flush=True)
         return {"status": "error", "message": str(e)}
 
 if __name__ == "__main__":
