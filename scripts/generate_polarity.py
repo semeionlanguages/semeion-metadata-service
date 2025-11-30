@@ -59,7 +59,6 @@ async def run_polarity_pipeline(conn):
         SELECT hash_id, en
         FROM canonical_lexicon
         WHERE polarity IS NULL
-           OR polarity_numeric IS NULL
     """)
 
     rows = cur.fetchall()
@@ -115,10 +114,9 @@ async def run_polarity_pipeline(conn):
             UPDATE canonical_lexicon
             SET 
                 polarity = %s,
-                polarity_numeric = %s,
                 updated_at = NOW()
             WHERE hash_id = %s
-        """, (polarity, polarity_numeric, hash_id))
+        """, (polarity, hash_id))
         conn.commit()
 
         # Progress update every 25 rows
