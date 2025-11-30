@@ -5,16 +5,13 @@ import os
 import psycopg2
 import uvicorn
 from dotenv import load_dotenv
+import subprocess
+import json
 
-# Load environment variables
 load_dotenv()
-
-# REAL IMPORT - NO PLACEHOLDER
-from scripts.generate_frequency_metrics import run_metadata_pipeline
 
 app = FastAPI(title="Semeion Metadata Service")
 
-# CORS Configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -25,7 +22,6 @@ app.add_middleware(
 
 DATABASE_URL = os.getenv("DATABASE_URL1")
 
-# Global DB connection
 try:
     conn = psycopg2.connect(DATABASE_URL)
     print("[STARTUP] Database connected successfully", flush=True)
@@ -69,26 +65,47 @@ async def generate(req: MetadataRequest):
     finally:
         cursor.close()
 
-# REAL ENDPOINT - RUNS ACTUAL PYTHON SCRIPT
 @app.post("/run/metadata-pipeline")
 async def metadata_pipeline_endpoint():
     """
-    Generate frequency metrics: zipf, frequency, dispersion_cd, level, difficulty, difficulty_numeric
-    RUNS THE ACTUAL SCRIPT ON REAL DATA
+    Generate frequency metrics by running the Python script directly
     """
     print("[API] Trigger received: metadata pipeline", flush=True)
     
     if not conn:
-        print("[API] ERROR: Database not connected", flush=True)
         return {"status": "error", "message": "Database not connected"}
     
-    print("[API] Calling run_metadata_pipeline with real database connection...", flush=True)
-    
-    # CALL THE REAL FUNCTION
-    result = await run_metadata_pipeline(conn)
-    
-    print(f"[API] Pipeline completed: {result}", flush=True)
-    return result
+    try:
+        # Run the script as a subprocess
+        print("[API] Running generate_frequency_metrics.py...", flush=True)
+        result = subprocess.run(
+            ["python", "scripts/generate_frequency_metrics.py"],
+            capture_output=True,
+            text=True,
+            timeout=300  # 5 minute timeout
+        )
+        
+        print(f"[API] Script output: {result.stdout}", flush=True)
+        if result.stderr:
+            print(f"[API] Script errors: {result.stderr}", flush=True)
+        
+        if result.returncode == 0:
+            return {
+                "status": "ok",
+                "job_id": "subprocess-run",
+                "processed": "check logs",
+                "message": "Script executed successfully",
+                "output": result.stdout
+            }
+        else:
+            return {
+                "status": "error",
+                "message": f"Script failed with code {result.returncode}",
+                "error": result.stderr
+            }
+    except Exception as e:
+        print(f"[API] ERROR: {str(e)}", flush=True)
+        return {"status": "error", "message": str(e)}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8080)
