@@ -8,6 +8,7 @@ import uvicorn
 from dotenv import load_dotenv
 import uuid
 import asyncio
+from io import StringIO
 
 load_dotenv()
 
@@ -53,10 +54,81 @@ async def metadata_pipeline_endpoint():
         
         print("[API] Executing pipeline...", flush=True)
         
-        # IMPORTANT: Call with await since it's async
-        result = await run_metadata_pipeline(conn)
+        # Capture stdout to return logs to frontend
+        captured_output = StringIO()
+        old_stdout = sys.stdout
+        
+        try:
+            # Redirect stdout to capture print statements
+            sys.stdout = captured_output
+            
+            # IMPORTANT: Call with await since it's async
+            result = await run_metadata_pipeline(conn)
+            
+        finally:
+            # Restore original stdout
+            sys.stdout = old_stdout
+        
+        # Get captured logs
+        logs = captured_output.getvalue()
         
         print(f"[API] Pipeline completed: {result}", flush=True)
+        
+        # Add logs to the result
+        if isinstance(result, dict):
+            result["stdout"] = logs
+            result["logs"] = logs.split('\n')  # Also provide as array for easier frontend parsing
+        
+        return result
+        
+    except ImportError as e:
+        print(f"[API] Import Error: {e}", flush=True)
+        return {"status": "error", "message": f"Script import failed: {str(e)}"}
+    except Exception as e:
+        print(f"[API] Execution Error: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        return {"status": "error", "message": str(e)}
+
+@app.post("/run/polarity-pipeline")
+async def polarity_pipeline_endpoint():
+    print("[API] === POLARITY PIPELINE TRIGGERED ===", flush=True)
+    
+    if not conn:
+        print("[API] ERROR: No database connection", flush=True)
+        return {"status": "error", "message": "Database not connected"}
+    
+    try:
+        # Import the polarity pipeline function
+        sys.path.insert(0, os.path.dirname(__file__))
+        from scripts.generate_polarity import run_polarity_pipeline
+        
+        print("[API] Executing polarity pipeline...", flush=True)
+        
+        # Capture stdout to return logs to frontend
+        captured_output = StringIO()
+        old_stdout = sys.stdout
+        
+        try:
+            # Redirect stdout to capture print statements
+            sys.stdout = captured_output
+            
+            # IMPORTANT: Call with await since it's async
+            result = await run_polarity_pipeline(conn)
+            
+        finally:
+            # Restore original stdout
+            sys.stdout = old_stdout
+        
+        # Get captured logs
+        logs = captured_output.getvalue()
+        
+        print(f"[API] Polarity pipeline completed: {result}", flush=True)
+        
+        # Add logs to the result
+        if isinstance(result, dict):
+            result["stdout"] = logs
+            result["logs"] = logs.split('\n')  # Also provide as array for easier frontend parsing
         
         return result
         

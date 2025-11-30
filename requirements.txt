@@ -6,4 +6,5 @@ pydantic
 wordfreq
 numpy
 aiohttp
+vaderSentiment
 
