@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import os
 import sys
@@ -9,6 +10,7 @@ from dotenv import load_dotenv
 import uuid
 import asyncio
 from io import StringIO
+import json
 
 load_dotenv()
 
@@ -155,8 +157,56 @@ async def polarity_pipeline_endpoint():
         traceback.print_exc()
         return {"status": "error", "message": str(e)}
 
+@app.get("/run/register-pipeline/stream")
+async def register_pipeline_stream():
+    """Stream register pipeline progress in real-time using Server-Sent Events"""
+    
+    async def event_generator():
+        db_conn = get_db_connection()
+        if not db_conn:
+            yield f"data: {json.dumps({'type': 'error', 'message': 'Database not connected'})}\n\n"
+            return
+        
+        try:
+            sys.path.insert(0, os.path.dirname(__file__))
+            from scripts.generate_register import run_register_pipeline_streaming
+            
+            yield f"data: {json.dumps({'type': 'log', 'message': '[API] === REGISTER PIPELINE STARTED ==='})}\n\n"
+            
+            batch_count = 0
+            total_processed = 0
+            
+            # Auto-loop: process batches until all done
+            while True:
+                batch_count += 1
+                yield f"data: {json.dumps({'type': 'log', 'message': f'[API] Starting batch {batch_count}...'})}\n\n"
+                
+                # Process batch and stream logs
+                async for log_message in run_register_pipeline_streaming(db_conn, batch_size=500):
+                    yield f"data: {json.dumps({'type': 'log', 'message': log_message})}\n\n"
+                    
+                    # Check if this was the completion message
+                    if "nothing_to_process" in log_message or "DONE" in log_message:
+                        if "nothing_to_process" in log_message:
+                            yield f"data: {json.dumps({'type': 'log', 'message': f'[API] All entries processed! Total batches: {batch_count - 1}'})}\n\n"
+                            yield f"data: {json.dumps({'type': 'complete', 'total_processed': total_processed, 'batches': batch_count - 1})}\n\n"
+                            return
+                        else:
+                            total_processed += 500  # Approximate
+                            yield f"data: {json.dumps({'type': 'log', 'message': f'[API] Batch {batch_count} complete. Total: {total_processed}'})}\n\n"
+                            break
+                
+                # Small delay between batches
+                await asyncio.sleep(0.5)
+                
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+    
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
 @app.post("/run/register-pipeline")
 async def register_pipeline_endpoint():
+    """Start register pipeline in background - returns immediately"""
     print("[API] === REGISTER PIPELINE TRIGGERED ===", flush=True)
     
     db_conn = get_db_connection()
@@ -165,54 +215,17 @@ async def register_pipeline_endpoint():
         return {"status": "error", "message": "Database not connected"}
     
     try:
-        # Import the register pipeline function
         sys.path.insert(0, os.path.dirname(__file__))
         from scripts.generate_register import run_register_pipeline
         
-        # Capture stdout to return logs to frontend
-        captured_output = StringIO()
-        old_stdout = sys.stdout
-        
-        all_logs = []
-        batch_count = 0
-        total_processed = 0
-        
-        try:
-            # Redirect stdout to capture print statements
-            sys.stdout = captured_output
-            
-            # Auto-loop: process batches until all done
-            while True:
-                batch_count += 1
-                print(f"[API] Starting batch {batch_count}...", flush=True)
-                
-                result = await run_register_pipeline(db_conn, batch_size=500)
-                
-                if result.get("status") == "nothing_to_process":
-                    print(f"[API] All entries processed! Total batches: {batch_count - 1}", flush=True)
-                    break
-                
-                total_processed += result.get("processed", 0)
-                print(f"[API] Batch {batch_count} complete. Total processed so far: {total_processed}", flush=True)
-                
-                # Small delay between batches
-                await asyncio.sleep(0.5)
-                
-        finally:
-            # Restore original stdout
-            sys.stdout = old_stdout
-        
-        # Get captured logs
-        logs = captured_output.getvalue()
-        
-        print(f"[API] Register pipeline completed: {total_processed} total entries", flush=True)
+        # Start pipeline in background
+        asyncio.create_task(register_background_task(db_conn))
         
         return {
-            "status": "ok",
-            "total_processed": total_processed,
-            "batches": batch_count - 1,
-            "stdout": logs,
-            "logs": logs.split('\n')
+            "status": "started",
+            "message": "Register pipeline started in background",
+            "stream_url": "/run/register-pipeline/stream",
+            "note": "Use the stream endpoint to see live progress"
         }
         
     except ImportError as e:
@@ -223,6 +236,35 @@ async def register_pipeline_endpoint():
         import traceback
         traceback.print_exc()
         return {"status": "error", "message": str(e)}
+
+async def register_background_task(db_conn):
+    """Background task for register pipeline"""
+    try:
+        sys.path.insert(0, os.path.dirname(__file__))
+        from scripts.generate_register import run_register_pipeline
+        
+        batch_count = 0
+        total_processed = 0
+        
+        while True:
+            batch_count += 1
+            print(f"[BACKGROUND] Starting batch {batch_count}...", flush=True)
+            
+            result = await run_register_pipeline(db_conn, batch_size=500)
+            
+            if result.get("status") == "nothing_to_process":
+                print(f"[BACKGROUND] All entries processed! Total batches: {batch_count - 1}", flush=True)
+                break
+            
+            total_processed += result.get("processed", 0)
+            print(f"[BACKGROUND] Batch {batch_count} complete. Total: {total_processed}", flush=True)
+            
+            await asyncio.sleep(0.5)
+            
+    except Exception as e:
+        print(f"[BACKGROUND] Error: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8080)
