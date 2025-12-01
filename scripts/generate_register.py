@@ -65,16 +65,17 @@ def classify_formality(lemma: str) -> str:
 # Main register pipeline
 # ───────────────────────────────
 
-async def run_register_pipeline(conn):
+async def run_register_pipeline(conn, batch_size=500):
 
     cur = conn.cursor()
 
-    # STEP 1 — fetch ONLY missing register entries
+    # STEP 1 — fetch ONLY missing register entries (limit to batch_size)
     cur.execute("""
         SELECT hash_id, en
         FROM canonical_lexicon
         WHERE register IS NULL
-    """)
+        LIMIT %s
+    """, (batch_size,))
 
     rows = cur.fetchall()
     total = len(rows)

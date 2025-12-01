@@ -154,17 +154,25 @@ async def register_pipeline_endpoint():
         sys.path.insert(0, os.path.dirname(__file__))
         from scripts.generate_register import run_register_pipeline
         
-        print("[API] Starting register pipeline in background...", flush=True)
+        print("[API] Executing register pipeline (batch of 500)...", flush=True)
         
-        # Start pipeline in background (don't await)
-        asyncio.create_task(run_register_pipeline(conn))
+        # Process batch synchronously (waits ~10-15 minutes for 500 entries)
+        result = await run_register_pipeline(conn, batch_size=500)
         
-        # Return immediately with job started message
-        return {
-            "status": "started",
-            "message": "Register pipeline started in background. Check Render logs for progress.",
-            "note": "This is a long-running job (~15 hours for 36k entries). Monitor progress via metadata_progress table or Render logs."
-        }
+        print(f"[API] Register pipeline batch completed: {result}", flush=True)
+        
+        # Check if there are more entries to process
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM canonical_lexicon WHERE register IS NULL")
+        remaining = cur.fetchone()[0]
+        cur.close()
+        
+        if isinstance(result, dict):
+            result["remaining"] = remaining
+            if remaining > 0:
+                result["note"] = f"Batch complete. {remaining} entries remaining. Call endpoint again to process next batch."
+        
+        return result
         
     except ImportError as e:
         print(f"[API] Import Error: {e}", flush=True)
