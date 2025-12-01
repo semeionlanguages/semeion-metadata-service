@@ -154,34 +154,17 @@ async def register_pipeline_endpoint():
         sys.path.insert(0, os.path.dirname(__file__))
         from scripts.generate_register import run_register_pipeline
         
-        print("[API] Executing register pipeline...", flush=True)
+        print("[API] Starting register pipeline in background...", flush=True)
         
-        # Capture stdout to return logs to frontend
-        captured_output = StringIO()
-        old_stdout = sys.stdout
+        # Start pipeline in background (don't await)
+        asyncio.create_task(run_register_pipeline(conn))
         
-        try:
-            # Redirect stdout to capture print statements
-            sys.stdout = captured_output
-            
-            # IMPORTANT: Call with await since it's async
-            result = await run_register_pipeline(conn)
-            
-        finally:
-            # Restore original stdout
-            sys.stdout = old_stdout
-        
-        # Get captured logs
-        logs = captured_output.getvalue()
-        
-        print(f"[API] Register pipeline completed: {result}", flush=True)
-        
-        # Add logs to the result
-        if isinstance(result, dict):
-            result["stdout"] = logs
-            result["logs"] = logs.split('\n')  # Also provide as array for easier frontend parsing
-        
-        return result
+        # Return immediately with job started message
+        return {
+            "status": "started",
+            "message": "Register pipeline started in background. Check Render logs for progress.",
+            "note": "This is a long-running job (~15 hours for 36k entries). Monitor progress via metadata_progress table or Render logs."
+        }
         
     except ImportError as e:
         print(f"[API] Import Error: {e}", flush=True)
