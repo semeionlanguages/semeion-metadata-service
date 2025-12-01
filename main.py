@@ -141,5 +141,56 @@ async def polarity_pipeline_endpoint():
         traceback.print_exc()
         return {"status": "error", "message": str(e)}
 
+@app.post("/run/register-pipeline")
+async def register_pipeline_endpoint():
+    print("[API] === REGISTER PIPELINE TRIGGERED ===", flush=True)
+    
+    if not conn:
+        print("[API] ERROR: No database connection", flush=True)
+        return {"status": "error", "message": "Database not connected"}
+    
+    try:
+        # Import the register pipeline function
+        sys.path.insert(0, os.path.dirname(__file__))
+        from scripts.generate_register import run_register_pipeline
+        
+        print("[API] Executing register pipeline...", flush=True)
+        
+        # Capture stdout to return logs to frontend
+        captured_output = StringIO()
+        old_stdout = sys.stdout
+        
+        try:
+            # Redirect stdout to capture print statements
+            sys.stdout = captured_output
+            
+            # IMPORTANT: Call with await since it's async
+            result = await run_register_pipeline(conn)
+            
+        finally:
+            # Restore original stdout
+            sys.stdout = old_stdout
+        
+        # Get captured logs
+        logs = captured_output.getvalue()
+        
+        print(f"[API] Register pipeline completed: {result}", flush=True)
+        
+        # Add logs to the result
+        if isinstance(result, dict):
+            result["stdout"] = logs
+            result["logs"] = logs.split('\n')  # Also provide as array for easier frontend parsing
+        
+        return result
+        
+    except ImportError as e:
+        print(f"[API] Import Error: {e}", flush=True)
+        return {"status": "error", "message": f"Script import failed: {str(e)}"}
+    except Exception as e:
+        print(f"[API] Execution Error: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        return {"status": "error", "message": str(e)}
+
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8080)

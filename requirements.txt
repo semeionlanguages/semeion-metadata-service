@@ -7,4 +7,5 @@ wordfreq
 numpy
 aiohttp
 vaderSentiment
+openai
 
