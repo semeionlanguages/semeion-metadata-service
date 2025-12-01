@@ -266,5 +266,369 @@ async def register_background_task(db_conn):
         import traceback
         traceback.print_exc()
 
+# ═══════════════════════════════════════════════════════════════
+# TRANSLATION PIPELINE ENDPOINTS
+# ═══════════════════════════════════════════════════════════════
+
+# ─────────────────────────────────────────────────────────────
+# SPANISH TRANSLATION
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/run/spanish-pipeline/stream")
+async def spanish_pipeline_stream():
+    """Stream Spanish translation pipeline progress in real-time"""
+    
+    async def event_generator():
+        db_conn = get_db_connection()
+        if not db_conn:
+            yield f"data: {json.dumps({'type': 'error', 'message': 'Database not connected'})}\n\n"
+            return
+        
+        try:
+            sys.path.insert(0, os.path.dirname(__file__))
+            from scripts.spanish_translation_generator import run_spanish_translation_pipeline_streaming
+            
+            yield f"data: {json.dumps({'type': 'log', 'message': '[API] === SPANISH TRANSLATION STARTED ==='})}\n\n"
+            
+            batch_count = 0
+            total_processed = 0
+            
+            while True:
+                batch_count += 1
+                yield f"data: {json.dumps({'type': 'log', 'message': f'[API] Starting batch {batch_count}...'})}\n\n"
+                
+                async for log_message in run_spanish_translation_pipeline_streaming(db_conn, batch_size=500):
+                    yield f"data: {json.dumps({'type': 'log', 'message': log_message})}\n\n"
+                    
+                    if "nothing_to_process" in log_message or "DONE" in log_message:
+                        if "nothing_to_process" in log_message:
+                            yield f"data: {json.dumps({'type': 'log', 'message': f'[API] All entries processed! Total batches: {batch_count - 1}'})}\n\n"
+                            yield f"data: {json.dumps({'type': 'complete', 'total_processed': total_processed, 'batches': batch_count - 1})}\n\n"
+                            return
+                        else:
+                            total_processed += 500
+                            yield f"data: {json.dumps({'type': 'log', 'message': f'[API] Batch {batch_count} complete. Total: {total_processed}'})}\n\n"
+                            break
+                
+                await asyncio.sleep(0.5)
+                
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+    
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+@app.post("/run/spanish-pipeline")
+async def spanish_pipeline_endpoint():
+    """Start Spanish translation pipeline in background"""
+    print("[API] === SPANISH PIPELINE TRIGGERED ===", flush=True)
+    
+    db_conn = get_db_connection()
+    if not db_conn:
+        print("[API] ERROR: No database connection", flush=True)
+        return {"status": "error", "message": "Database not connected"}
+    
+    try:
+        sys.path.insert(0, os.path.dirname(__file__))
+        from scripts.spanish_translation_generator import run_spanish_translation_pipeline
+        
+        asyncio.create_task(translation_background_task(db_conn, "spanish"))
+        
+        return {
+            "status": "started",
+            "message": "Spanish translation pipeline started in background",
+            "stream_url": "/run/spanish-pipeline/stream",
+            "note": "Use the stream endpoint to see live progress"
+        }
+        
+    except ImportError as e:
+        print(f"[API] Import Error: {e}", flush=True)
+        return {"status": "error", "message": f"Script import failed: {str(e)}"}
+    except Exception as e:
+        print(f"[API] Execution Error: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        return {"status": "error", "message": str(e)}
+
+# ─────────────────────────────────────────────────────────────
+# GERMAN TRANSLATION
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/run/german-pipeline/stream")
+async def german_pipeline_stream():
+    """Stream German translation pipeline progress in real-time"""
+    
+    async def event_generator():
+        db_conn = get_db_connection()
+        if not db_conn:
+            yield f"data: {json.dumps({'type': 'error', 'message': 'Database not connected'})}\n\n"
+            return
+        
+        try:
+            sys.path.insert(0, os.path.dirname(__file__))
+            from scripts.german_translation_generator import run_german_translation_pipeline_streaming
+            
+            yield f"data: {json.dumps({'type': 'log', 'message': '[API] === GERMAN TRANSLATION STARTED ==='})}\n\n"
+            
+            batch_count = 0
+            total_processed = 0
+            
+            while True:
+                batch_count += 1
+                yield f"data: {json.dumps({'type': 'log', 'message': f'[API] Starting batch {batch_count}...'})}\n\n"
+                
+                async for log_message in run_german_translation_pipeline_streaming(db_conn, batch_size=500):
+                    yield f"data: {json.dumps({'type': 'log', 'message': log_message})}\n\n"
+                    
+                    if "nothing_to_process" in log_message or "DONE" in log_message:
+                        if "nothing_to_process" in log_message:
+                            yield f"data: {json.dumps({'type': 'log', 'message': f'[API] All entries processed! Total batches: {batch_count - 1}'})}\n\n"
+                            yield f"data: {json.dumps({'type': 'complete', 'total_processed': total_processed, 'batches': batch_count - 1})}\n\n"
+                            return
+                        else:
+                            total_processed += 500
+                            yield f"data: {json.dumps({'type': 'log', 'message': f'[API] Batch {batch_count} complete. Total: {total_processed}'})}\n\n"
+                            break
+                
+                await asyncio.sleep(0.5)
+                
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+    
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+@app.post("/run/german-pipeline")
+async def german_pipeline_endpoint():
+    """Start German translation pipeline in background"""
+    print("[API] === GERMAN PIPELINE TRIGGERED ===", flush=True)
+    
+    db_conn = get_db_connection()
+    if not db_conn:
+        print("[API] ERROR: No database connection", flush=True)
+        return {"status": "error", "message": "Database not connected"}
+    
+    try:
+        sys.path.insert(0, os.path.dirname(__file__))
+        from scripts.german_translation_generator import run_german_translation_pipeline
+        
+        asyncio.create_task(translation_background_task(db_conn, "german"))
+        
+        return {
+            "status": "started",
+            "message": "German translation pipeline started in background",
+            "stream_url": "/run/german-pipeline/stream",
+            "note": "Use the stream endpoint to see live progress"
+        }
+        
+    except ImportError as e:
+        print(f"[API] Import Error: {e}", flush=True)
+        return {"status": "error", "message": f"Script import failed: {str(e)}"}
+    except Exception as e:
+        print(f"[API] Execution Error: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        return {"status": "error", "message": str(e)}
+
+# ─────────────────────────────────────────────────────────────
+# FRENCH TRANSLATION
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/run/french-pipeline/stream")
+async def french_pipeline_stream():
+    """Stream French translation pipeline progress in real-time"""
+    
+    async def event_generator():
+        db_conn = get_db_connection()
+        if not db_conn:
+            yield f"data: {json.dumps({'type': 'error', 'message': 'Database not connected'})}\n\n"
+            return
+        
+        try:
+            sys.path.insert(0, os.path.dirname(__file__))
+            from scripts.french_translation_generator import run_french_translation_pipeline_streaming
+            
+            yield f"data: {json.dumps({'type': 'log', 'message': '[API] === FRENCH TRANSLATION STARTED ==='})}\n\n"
+            
+            batch_count = 0
+            total_processed = 0
+            
+            while True:
+                batch_count += 1
+                yield f"data: {json.dumps({'type': 'log', 'message': f'[API] Starting batch {batch_count}...'})}\n\n"
+                
+                async for log_message in run_french_translation_pipeline_streaming(db_conn, batch_size=500):
+                    yield f"data: {json.dumps({'type': 'log', 'message': log_message})}\n\n"
+                    
+                    if "nothing_to_process" in log_message or "DONE" in log_message:
+                        if "nothing_to_process" in log_message:
+                            yield f"data: {json.dumps({'type': 'log', 'message': f'[API] All entries processed! Total batches: {batch_count - 1}'})}\n\n"
+                            yield f"data: {json.dumps({'type': 'complete', 'total_processed': total_processed, 'batches': batch_count - 1})}\n\n"
+                            return
+                        else:
+                            total_processed += 500
+                            yield f"data: {json.dumps({'type': 'log', 'message': f'[API] Batch {batch_count} complete. Total: {total_processed}'})}\n\n"
+                            break
+                
+                await asyncio.sleep(0.5)
+                
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+    
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+@app.post("/run/french-pipeline")
+async def french_pipeline_endpoint():
+    """Start French translation pipeline in background"""
+    print("[API] === FRENCH PIPELINE TRIGGERED ===", flush=True)
+    
+    db_conn = get_db_connection()
+    if not db_conn:
+        print("[API] ERROR: No database connection", flush=True)
+        return {"status": "error", "message": "Database not connected"}
+    
+    try:
+        sys.path.insert(0, os.path.dirname(__file__))
+        from scripts.french_translation_generator import run_french_translation_pipeline
+        
+        asyncio.create_task(translation_background_task(db_conn, "french"))
+        
+        return {
+            "status": "started",
+            "message": "French translation pipeline started in background",
+            "stream_url": "/run/french-pipeline/stream",
+            "note": "Use the stream endpoint to see live progress"
+        }
+        
+    except ImportError as e:
+        print(f"[API] Import Error: {e}", flush=True)
+        return {"status": "error", "message": f"Script import failed: {str(e)}"}
+    except Exception as e:
+        print(f"[API] Execution Error: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        return {"status": "error", "message": str(e)}
+
+# ─────────────────────────────────────────────────────────────
+# CHINESE TRANSLATION
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/run/chinese-pipeline/stream")
+async def chinese_pipeline_stream():
+    """Stream Chinese translation pipeline progress in real-time"""
+    
+    async def event_generator():
+        db_conn = get_db_connection()
+        if not db_conn:
+            yield f"data: {json.dumps({'type': 'error', 'message': 'Database not connected'})}\n\n"
+            return
+        
+        try:
+            sys.path.insert(0, os.path.dirname(__file__))
+            from scripts.chinese_translation_generator import run_chinese_translation_pipeline_streaming
+            
+            yield f"data: {json.dumps({'type': 'log', 'message': '[API] === CHINESE TRANSLATION STARTED ==='})}\n\n"
+            
+            batch_count = 0
+            total_processed = 0
+            
+            while True:
+                batch_count += 1
+                yield f"data: {json.dumps({'type': 'log', 'message': f'[API] Starting batch {batch_count}...'})}\n\n"
+                
+                async for log_message in run_chinese_translation_pipeline_streaming(db_conn, batch_size=500):
+                    yield f"data: {json.dumps({'type': 'log', 'message': log_message})}\n\n"
+                    
+                    if "nothing_to_process" in log_message or "DONE" in log_message:
+                        if "nothing_to_process" in log_message:
+                            yield f"data: {json.dumps({'type': 'log', 'message': f'[API] All entries processed! Total batches: {batch_count - 1}'})}\n\n"
+                            yield f"data: {json.dumps({'type': 'complete', 'total_processed': total_processed, 'batches': batch_count - 1})}\n\n"
+                            return
+                        else:
+                            total_processed += 500
+                            yield f"data: {json.dumps({'type': 'log', 'message': f'[API] Batch {batch_count} complete. Total: {total_processed}'})}\n\n"
+                            break
+                
+                await asyncio.sleep(0.5)
+                
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+    
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+@app.post("/run/chinese-pipeline")
+async def chinese_pipeline_endpoint():
+    """Start Chinese translation pipeline in background"""
+    print("[API] === CHINESE PIPELINE TRIGGERED ===", flush=True)
+    
+    db_conn = get_db_connection()
+    if not db_conn:
+        print("[API] ERROR: No database connection", flush=True)
+        return {"status": "error", "message": "Database not connected"}
+    
+    try:
+        sys.path.insert(0, os.path.dirname(__file__))
+        from scripts.chinese_translation_generator import run_chinese_translation_pipeline
+        
+        asyncio.create_task(translation_background_task(db_conn, "chinese"))
+        
+        return {
+            "status": "started",
+            "message": "Chinese translation pipeline started in background",
+            "stream_url": "/run/chinese-pipeline/stream",
+            "note": "Use the stream endpoint to see live progress"
+        }
+        
+    except ImportError as e:
+        print(f"[API] Import Error: {e}", flush=True)
+        return {"status": "error", "message": f"Script import failed: {str(e)}"}
+    except Exception as e:
+        print(f"[API] Execution Error: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        return {"status": "error", "message": str(e)}
+
+# ─────────────────────────────────────────────────────────────
+# SHARED BACKGROUND TASK FOR TRANSLATIONS
+# ─────────────────────────────────────────────────────────────
+
+async def translation_background_task(db_conn, language):
+    """Background task for translation pipelines"""
+    try:
+        sys.path.insert(0, os.path.dirname(__file__))
+        
+        if language == "spanish":
+            from scripts.spanish_translation_generator import run_spanish_translation_pipeline as run_pipeline
+        elif language == "german":
+            from scripts.german_translation_generator import run_german_translation_pipeline as run_pipeline
+        elif language == "french":
+            from scripts.french_translation_generator import run_french_translation_pipeline as run_pipeline
+        elif language == "chinese":
+            from scripts.chinese_translation_generator import run_chinese_translation_pipeline as run_pipeline
+        else:
+            print(f"[BACKGROUND] Unknown language: {language}", flush=True)
+            return
+        
+        batch_count = 0
+        total_processed = 0
+        
+        while True:
+            batch_count += 1
+            print(f"[BACKGROUND-{language.upper()}] Starting batch {batch_count}...", flush=True)
+            
+            result = await run_pipeline(db_conn, batch_size=500)
+            
+            if result.get("status") == "nothing_to_process":
+                print(f"[BACKGROUND-{language.upper()}] All entries processed! Total batches: {batch_count - 1}", flush=True)
+                break
+            
+            total_processed += result.get("processed", 0)
+            print(f"[BACKGROUND-{language.upper()}] Batch {batch_count} complete. Total: {total_processed}", flush=True)
+            
+            await asyncio.sleep(0.5)
+            
+    except Exception as e:
+        print(f"[BACKGROUND-{language.upper()}] Error: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8080)

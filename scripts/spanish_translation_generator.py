@@ -90,7 +90,7 @@ def choose_model(word, cat1, freq, level):
     return "gpt-4o-mini"
 
 
-def build_prompt(word: str, cat1: str, target_lang: str = "German") -> str:
+def build_prompt(word: str, cat1: str, target_lang: str = "Spanish") -> str:
     """Build translation prompt"""
     return (
         f"Translate the following English word into {target_lang} in its sense related to the semantic domain (category). "
@@ -124,20 +124,20 @@ def get_translation(prompt: str, model: str, max_retries: int = 3) -> str:
 
 
 # ───────────────────────────────
-# Main German Translation Pipeline
+# Main Spanish Translation Pipeline
 # ───────────────────────────────
 
-async def run_german_translation_pipeline(conn, batch_size=500):
+async def run_spanish_translation_pipeline(conn, batch_size=500):
     """
-    Translates English words to German using adaptive GPT model selection
+    Translates English words to Spanish using adaptive GPT model selection
     """
     cur = conn.cursor()
 
-    # STEP 1 — fetch entries needing German translation
+    # STEP 1 — fetch entries needing Spanish translation
     cur.execute("""
         SELECT hash_id, en, cat1a, frequency, level
         FROM canonical_lexicon
-        WHERE de IS NULL
+        WHERE es IS NULL
         LIMIT %s
     """, (batch_size,))
 
@@ -156,7 +156,7 @@ async def run_german_translation_pipeline(conn, batch_size=500):
         conn.commit()
         cur.close()
         
-        print("[GERMAN] No entries found. Nothing to process.", flush=True)
+        print("[SPANISH] No entries found. Nothing to process.", flush=True)
         
         return {
             "status": "nothing_to_process",
@@ -171,7 +171,7 @@ async def run_german_translation_pipeline(conn, batch_size=500):
     """, (job_id, total, 0))
     conn.commit()
 
-    print(f"[GERMAN] Starting job {job_id}. Total entries: {total}", flush=True)
+    print(f"[SPANISH] Starting job {job_id}. Total entries: {total}", flush=True)
 
     # Translation cache
     translation_cache = {}
@@ -200,14 +200,14 @@ async def run_german_translation_pipeline(conn, batch_size=500):
             if key in translation_cache:
                 translation = translation_cache[key]
             else:
-                prompt = build_prompt(word, cat1, "German")
+                prompt = build_prompt(word, cat1, "Spanish")
                 translation = get_translation(prompt, model)
                 translation_cache[key] = translation
 
         # Update canonical_lexicon
         cur.execute("""
             UPDATE canonical_lexicon
-            SET de = %s,
+            SET es = %s,
                 updated_at = NOW()
             WHERE hash_id = %s
         """, (translation, hash_id))
@@ -223,7 +223,7 @@ async def run_german_translation_pipeline(conn, batch_size=500):
             """, (idx, job_id))
             conn.commit()
 
-            print(f"[GERMAN] {idx}/{total} processed...", flush=True)
+            print(f"[SPANISH] {idx}/{total} processed...", flush=True)
 
         await asyncio.sleep(0)
 
@@ -242,7 +242,7 @@ async def run_german_translation_pipeline(conn, batch_size=500):
 
     cur.close()
 
-    print(f"[GERMAN] Job {job_id} DONE.", flush=True)
+    print(f"[SPANISH] Job {job_id} DONE.", flush=True)
 
     return {
         "status": "ok",
@@ -255,17 +255,17 @@ async def run_german_translation_pipeline(conn, batch_size=500):
 # Streaming version for real-time logs
 # ───────────────────────────────
 
-async def run_german_translation_pipeline_streaming(conn, batch_size=500):
+async def run_spanish_translation_pipeline_streaming(conn, batch_size=500):
     """
     Generator version that yields log messages in real-time
     """
     cur = conn.cursor()
 
-    # STEP 1 — fetch entries needing German translation
+    # STEP 1 — fetch entries needing Spanish translation
     cur.execute("""
         SELECT hash_id, en, cat1a, frequency, level
         FROM canonical_lexicon
-        WHERE de IS NULL
+        WHERE es IS NULL
         LIMIT %s
     """, (batch_size,))
 
@@ -284,7 +284,7 @@ async def run_german_translation_pipeline_streaming(conn, batch_size=500):
         conn.commit()
         cur.close()
         
-        yield "[GERMAN] No entries found. nothing_to_process"
+        yield "[SPANISH] No entries found. nothing_to_process"
         return
 
     # STEP 2 — create progress row
@@ -294,7 +294,7 @@ async def run_german_translation_pipeline_streaming(conn, batch_size=500):
     """, (job_id, total, 0))
     conn.commit()
 
-    yield f"[GERMAN] Starting job {job_id}. Total entries: {total}"
+    yield f"[SPANISH] Starting job {job_id}. Total entries: {total}"
 
     # Translation cache
     translation_cache = {}
@@ -323,14 +323,14 @@ async def run_german_translation_pipeline_streaming(conn, batch_size=500):
             if key in translation_cache:
                 translation = translation_cache[key]
             else:
-                prompt = build_prompt(word, cat1, "German")
+                prompt = build_prompt(word, cat1, "Spanish")
                 translation = get_translation(prompt, model)
                 translation_cache[key] = translation
 
         # Update canonical_lexicon
         cur.execute("""
             UPDATE canonical_lexicon
-            SET de = %s,
+            SET es = %s,
                 updated_at = NOW()
             WHERE hash_id = %s
         """, (translation, hash_id))
@@ -346,7 +346,7 @@ async def run_german_translation_pipeline_streaming(conn, batch_size=500):
             """, (idx, job_id))
             conn.commit()
 
-            yield f"[GERMAN] {idx}/{total} processed..."
+            yield f"[SPANISH] {idx}/{total} processed..."
 
         await asyncio.sleep(0)
 
@@ -365,4 +365,4 @@ async def run_german_translation_pipeline_streaming(conn, batch_size=500):
 
     cur.close()
 
-    yield f"[GERMAN] Job {job_id} DONE."
+    yield f"[SPANISH] Job {job_id} DONE."
