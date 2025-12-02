@@ -238,31 +238,53 @@ async def register_pipeline_endpoint():
         return {"status": "error", "message": str(e)}
 
 async def register_background_task(db_conn):
-    """Background task for register pipeline"""
+    """Background task for register pipeline - runs until all entries are processed"""
     try:
         sys.path.insert(0, os.path.dirname(__file__))
         from scripts.generate_register import run_register_pipeline
         
         batch_count = 0
         total_processed = 0
+        consecutive_errors = 0
+        max_consecutive_errors = 3
         
         while True:
             batch_count += 1
             print(f"[BACKGROUND] Starting batch {batch_count}...", flush=True)
             
-            result = await run_register_pipeline(db_conn, batch_size=500)
-            
-            if result.get("status") == "nothing_to_process":
-                print(f"[BACKGROUND] All entries processed! Total batches: {batch_count - 1}", flush=True)
-                break
-            
-            total_processed += result.get("processed", 0)
-            print(f"[BACKGROUND] Batch {batch_count} complete. Total: {total_processed}", flush=True)
-            
-            await asyncio.sleep(0.5)
+            try:
+                result = await run_register_pipeline(db_conn, batch_size=500)
+                
+                if result.get("status") == "nothing_to_process":
+                    print(f"[BACKGROUND] All entries processed! Total batches: {batch_count - 1}", flush=True)
+                    break
+                
+                # Reset error counter on success
+                consecutive_errors = 0
+                
+                total_processed += result.get("processed", 0)
+                failed = result.get("failed", 0)
+                print(f"[BACKGROUND] Batch {batch_count} complete. Total: {total_processed} (Failed in batch: {failed})", flush=True)
+                
+                # Small delay between batches
+                await asyncio.sleep(0.5)
+                
+            except Exception as batch_error:
+                consecutive_errors += 1
+                print(f"[BACKGROUND] Batch {batch_count} error ({consecutive_errors}/{max_consecutive_errors}): {batch_error}", flush=True)
+                import traceback
+                traceback.print_exc()
+                
+                if consecutive_errors >= max_consecutive_errors:
+                    print(f"[BACKGROUND] Too many consecutive errors. Stopping.", flush=True)
+                    break
+                
+                # Wait longer before retrying after an error
+                print(f"[BACKGROUND] Waiting 5 seconds before retrying...", flush=True)
+                await asyncio.sleep(5)
             
     except Exception as e:
-        print(f"[BACKGROUND] Error: {e}", flush=True)
+        print(f"[BACKGROUND] Fatal error: {e}", flush=True)
         import traceback
         traceback.print_exc()
 

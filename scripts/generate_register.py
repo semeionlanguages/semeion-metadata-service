@@ -2,6 +2,8 @@ import uuid
 import asyncio
 from openai import OpenAI
 import os
+import time
+from typing import Optional
 
 # ───────────────────────────────
 # Initialize OpenAI client
@@ -36,29 +38,45 @@ Rules:
 # Helper function
 # ───────────────────────────────
 
-def classify_formality(lemma: str) -> str:
+def classify_formality(lemma: str, max_retries: int = 5) -> Optional[str]:
     """
     Returns one of:
     formal, neutral, informal, slang, archaic
+    
+    Implements exponential backoff retry logic for robustness.
+    Returns None if all retries fail.
     """
+    
+    for attempt in range(max_retries):
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                temperature=0,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user",   "content": lemma}
+                ],
+                timeout=30.0  # 30 second timeout
+            )
 
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        temperature=0,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user",   "content": lemma}
-        ],
-    )
+            raw = response.choices[0].message.content.strip().lower()
 
-    raw = response.choices[0].message.content.strip().lower()
+            # Safety check: enforce valid output
+            if raw not in ALLOWED_FORMALITY:
+                # fallback to neutral if GPT gives something unexpected
+                return "neutral"
 
-    # Safety check: enforce valid output
-    if raw not in ALLOWED_FORMALITY:
-        # fallback to neutral if GPT gives something unexpected
-        return "neutral"
-
-    return raw
+            return raw
+            
+        except Exception as e:
+            wait_time = (2 ** attempt) + (0.1 * attempt)  # Exponential backoff
+            
+            if attempt < max_retries - 1:
+                print(f"[RETRY] Attempt {attempt + 1} failed for '{lemma}': {str(e)}. Retrying in {wait_time:.1f}s...", flush=True)
+                time.sleep(wait_time)
+            else:
+                print(f"[ERROR] All {max_retries} attempts failed for '{lemma}': {str(e)}", flush=True)
+                return None  # Return None to signal failure
 
 
 # ───────────────────────────────
@@ -115,10 +133,18 @@ async def run_register_pipeline(conn, batch_size=500):
     # MAIN LOOP — generate register
     # ─────────────────────────────
 
+    failed_entries = []
+    
     for idx, (hash_id, word) in enumerate(rows, start=1):
 
-        # Classify formality using GPT-4
+        # Classify formality using GPT-4 with retry logic
         register = classify_formality(word)
+        
+        # If classification failed after all retries, skip and log
+        if register is None:
+            failed_entries.append((hash_id, word))
+            print(f"[SKIP] Failed to classify '{word}' (hash: {hash_id}). Will retry later.", flush=True)
+            continue
 
         # Update canonical_lexicon
         cur.execute("""
@@ -139,31 +165,39 @@ async def run_register_pipeline(conn, batch_size=500):
             """, (idx, job_id))
             conn.commit()
 
-            print(f"[REGISTER] {idx}/{total} processed...", flush=True)
+            print(f"[REGISTER] {idx}/{total} processed... (Failed: {len(failed_entries)})", flush=True)
 
-        await asyncio.sleep(0)
+        # Rate limiting: small delay to avoid hitting API limits
+        await asyncio.sleep(0.05)
 
     # Final commit for leftovers
     conn.commit()
 
     # STEP 3 — mark job completed
+    successful = total - len(failed_entries)
+    
     cur.execute("""
         UPDATE metadata_progress
         SET processed = %s,
             status = 'complete',
             finished_at = NOW()
         WHERE job_id = %s
-    """, (total, job_id))
+    """, (successful, job_id))
     conn.commit()
 
     cur.close()
 
-    print(f"[REGISTER] Job {job_id} DONE.", flush=True)
+    if failed_entries:
+        print(f"[REGISTER] Job {job_id} DONE. Processed: {successful}/{total}. Failed: {len(failed_entries)}", flush=True)
+    else:
+        print(f"[REGISTER] Job {job_id} DONE. All {total} entries processed successfully.", flush=True)
 
     return {
         "status": "ok",
         "job_id": job_id,
-        "processed": total
+        "processed": successful,
+        "failed": len(failed_entries),
+        "failed_entries": failed_entries
     }
 
 
@@ -213,10 +247,18 @@ async def run_register_pipeline_streaming(conn, batch_size=500):
     yield f"[REGISTER] Starting job {job_id}. Total entries: {total}"
 
     # MAIN LOOP — generate register
+    failed_entries = []
+    
     for idx, (hash_id, word) in enumerate(rows, start=1):
 
-        # Classify formality using GPT-4
+        # Classify formality using GPT-4 with retry logic
         register = classify_formality(word)
+        
+        # If classification failed after all retries, skip and log
+        if register is None:
+            failed_entries.append((hash_id, word))
+            yield f"[SKIP] Failed to classify '{word}' (hash: {hash_id}). Will retry later."
+            continue
 
         # Update canonical_lexicon
         cur.execute("""
@@ -237,23 +279,29 @@ async def run_register_pipeline_streaming(conn, batch_size=500):
             """, (idx, job_id))
             conn.commit()
 
-            yield f"[REGISTER] {idx}/{total} processed..."
+            yield f"[REGISTER] {idx}/{total} processed... (Failed: {len(failed_entries)})"
 
-        await asyncio.sleep(0)
+        # Rate limiting: small delay to avoid hitting API limits
+        await asyncio.sleep(0.05)
 
     # Final commit for leftovers
     conn.commit()
 
     # STEP 3 — mark job completed
+    successful = total - len(failed_entries)
+    
     cur.execute("""
         UPDATE metadata_progress
         SET processed = %s,
             status = 'complete',
             finished_at = NOW()
         WHERE job_id = %s
-    """, (total, job_id))
+    """, (successful, job_id))
     conn.commit()
 
     cur.close()
 
-    yield f"[REGISTER] Job {job_id} DONE."
+    if failed_entries:
+        yield f"[REGISTER] Job {job_id} DONE. Processed: {successful}/{total}. Failed: {len(failed_entries)}"
+    else:
+        yield f"[REGISTER] Job {job_id} DONE. All {total} entries processed successfully."
