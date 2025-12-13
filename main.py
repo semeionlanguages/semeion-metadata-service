@@ -157,6 +157,137 @@ async def polarity_pipeline_endpoint():
         traceback.print_exc()
         return {"status": "error", "message": str(e)}
 
+@app.get("/run/pos-pipeline/stream")
+async def pos_pipeline_stream():
+    """Stream POS pipeline progress in real-time using Server-Sent Events"""
+    
+    async def event_generator():
+        db_conn = get_db_connection()
+        if not db_conn:
+            yield f"data: {json.dumps({'type': 'error', 'message': 'Database not connected'})}\n\n"
+            return
+        
+        try:
+            sys.path.insert(0, os.path.dirname(__file__))
+            from scripts.generate_pos import run_pos_pipeline_streaming
+            
+            yield f"data: {json.dumps({'type': 'log', 'message': '[API] === POS PIPELINE STARTED ==='})}\n\n"
+            
+            batch_count = 0
+            total_processed = 0
+            
+            # Auto-loop: process batches until all done
+            while True:
+                batch_count += 1
+                yield f"data: {json.dumps({'type': 'log', 'message': f'[API] Starting batch {batch_count}...'})}\n\n"
+                
+                # Process batch and stream logs
+                async for log_message in run_pos_pipeline_streaming(db_conn, batch_size=500):
+                    yield f"data: {json.dumps({'type': 'log', 'message': log_message})}\n\n"
+                    
+                    # Check if this was the completion message
+                    if "nothing_to_process" in log_message or "COMPLETE" in log_message:
+                        if "nothing_to_process" in log_message:
+                            yield f"data: {json.dumps({'type': 'log', 'message': f'[API] All entries processed! Total batches: {batch_count - 1}'})}\n\n"
+                            yield f"data: {json.dumps({'type': 'complete', 'total_processed': total_processed, 'batches': batch_count - 1})}\n\n"
+                            return
+                        else:
+                            total_processed += 500  # Approximate
+                            yield f"data: {json.dumps({'type': 'log', 'message': f'[API] Batch {batch_count} complete. Total: {total_processed}'})}\n\n"
+                            break
+                
+                # Small delay between batches
+                await asyncio.sleep(0.5)
+                
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+    
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+@app.post("/run/pos-pipeline")
+async def pos_pipeline_endpoint():
+    """Start POS pipeline in background - returns immediately"""
+    print("[API] === POS PIPELINE TRIGGERED ===", flush=True)
+    
+    db_conn = get_db_connection()
+    if not db_conn:
+        print("[API] ERROR: No database connection", flush=True)
+        return {"status": "error", "message": "Database not connected"}
+    
+    try:
+        sys.path.insert(0, os.path.dirname(__file__))
+        from scripts.generate_pos import run_pos_pipeline
+        
+        # Start pipeline in background
+        asyncio.create_task(pos_background_task(db_conn))
+        
+        return {
+            "status": "started",
+            "message": "POS pipeline started in background",
+            "stream_url": "/run/pos-pipeline/stream",
+            "note": "Use the stream endpoint to see live progress"
+        }
+        
+    except ImportError as e:
+        print(f"[API] Import Error: {e}", flush=True)
+        return {"status": "error", "message": f"Script import failed: {str(e)}"}
+    except Exception as e:
+        print(f"[API] Execution Error: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        return {"status": "error", "message": str(e)}
+
+async def pos_background_task(db_conn):
+    """Background task for POS pipeline - runs until all entries are processed"""
+    try:
+        sys.path.insert(0, os.path.dirname(__file__))
+        from scripts.generate_pos import run_pos_pipeline
+        
+        batch_count = 0
+        total_processed = 0
+        consecutive_errors = 0
+        max_consecutive_errors = 3
+        
+        while True:
+            batch_count += 1
+            print(f"[BACKGROUND-POS] Starting batch {batch_count}...", flush=True)
+            
+            try:
+                result = await run_pos_pipeline(db_conn, batch_size=500)
+                
+                if result.get("status") == "nothing_to_process":
+                    print(f"[BACKGROUND-POS] All entries processed! Total batches: {batch_count - 1}", flush=True)
+                    break
+                
+                # Reset error counter on success
+                consecutive_errors = 0
+                
+                total_processed += result.get("processed", 0)
+                failed = result.get("failed", 0)
+                print(f"[BACKGROUND-POS] Batch {batch_count} complete. Total: {total_processed} (Failed in batch: {failed})", flush=True)
+                
+                # Small delay between batches
+                await asyncio.sleep(0.5)
+                
+            except Exception as batch_error:
+                consecutive_errors += 1
+                print(f"[BACKGROUND-POS] Batch {batch_count} error ({consecutive_errors}/{max_consecutive_errors}): {batch_error}", flush=True)
+                import traceback
+                traceback.print_exc()
+                
+                if consecutive_errors >= max_consecutive_errors:
+                    print(f"[BACKGROUND-POS] Too many consecutive errors. Stopping.", flush=True)
+                    break
+                
+                # Wait longer before retrying after an error
+                print(f"[BACKGROUND-POS] Waiting 5 seconds before retrying...", flush=True)
+                await asyncio.sleep(5)
+            
+    except Exception as e:
+        print(f"[BACKGROUND-POS] Fatal error: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+
 @app.get("/run/register-pipeline/stream")
 async def register_pipeline_stream():
     """Stream register pipeline progress in real-time using Server-Sent Events"""
