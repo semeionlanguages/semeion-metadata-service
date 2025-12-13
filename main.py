@@ -797,5 +797,58 @@ async def translation_background_task(db_conn, language):
         import traceback
         traceback.print_exc()
 
+# ═══════════════════════════════════════════════════════════════
+# ALL TRANSLATIONS ENDPOINT
+# ═══════════════════════════════════════════════════════════════
+
+@app.post("/run/all-translations")
+async def all_translations_endpoint():
+    """Start all four translation pipelines sequentially in background"""
+    print("[API] === ALL TRANSLATIONS TRIGGERED ===", flush=True)
+    
+    db_conn = get_db_connection()
+    if not db_conn:
+        print("[API] ERROR: No database connection", flush=True)
+        return {"status": "error", "message": "Database not connected"}
+    
+    try:
+        # Start all translations in background
+        asyncio.create_task(all_translations_background_task(db_conn))
+        
+        return {
+            "status": "started",
+            "message": "All translation pipelines started in background",
+            "languages": ["spanish", "french", "german", "chinese"],
+            "note": "Pipelines will run sequentially"
+        }
+        
+    except Exception as e:
+        print(f"[API] Execution Error: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        return {"status": "error", "message": str(e)}
+
+async def all_translations_background_task(db_conn):
+    """Background task that runs all translation pipelines sequentially"""
+    languages = ["spanish", "french", "german", "chinese"]
+    
+    print("[ALL-TRANSLATIONS] Starting sequential translation pipeline...", flush=True)
+    
+    for language in languages:
+        print(f"[ALL-TRANSLATIONS] Starting {language.upper()} pipeline...", flush=True)
+        
+        try:
+            # Run the translation pipeline for this language
+            await translation_background_task(db_conn, language)
+            print(f"[ALL-TRANSLATIONS] {language.upper()} pipeline completed", flush=True)
+        except Exception as e:
+            print(f"[ALL-TRANSLATIONS] Error in {language.upper()} pipeline: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+            # Continue with next language even if one fails
+            continue
+    
+    print("[ALL-TRANSLATIONS] All translation pipelines completed!", flush=True)
+
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8080)
