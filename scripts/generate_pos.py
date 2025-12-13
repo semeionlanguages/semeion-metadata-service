@@ -225,7 +225,16 @@ def aggregate_pos(word: str) -> Optional[List[str]]:
             for pos in pos_list:
                 scores[pos] += weights[method]
 
-    final = [pos for pos, score in scores.items() if score >= 0.28]
+    # Lower threshold to 0.20 to catch more cases
+    # If still nothing, return the highest scoring POS if any score > 0
+    final = [pos for pos, score in scores.items() if score >= 0.20]
+    
+    if not final:
+        # Fallback: return highest scoring if any
+        max_score = max(scores.values())
+        if max_score > 0:
+            final = [pos for pos, score in scores.items() if score == max_score]
+    
     return final or None
 
 
@@ -270,9 +279,17 @@ async def run_pos_pipeline(conn, batch_size=500):
 
     for idx, (hash_id, word) in enumerate(rows, start=1):
 
-        pos = aggregate_pos(word)
+        try:
+            pos = aggregate_pos(word)
 
-        if not pos:
+            if not pos:
+                # Log first 5 failures for debugging
+                if len(failed) < 5:
+                    print(f"[POS] Failed to detect POS for: '{word}'", flush=True)
+                failed.append((hash_id, word))
+                continue
+        except Exception as e:
+            print(f"[POS] Error processing '{word}': {e}", flush=True)
             failed.append((hash_id, word))
             continue
 
@@ -362,11 +379,18 @@ async def run_pos_pipeline_streaming(conn, batch_size=500):
 
     for idx, (hash_id, word) in enumerate(rows, start=1):
 
-        pos = aggregate_pos(word)
+        try:
+            pos = aggregate_pos(word)
 
-        if not pos:
+            if not pos:
+                # Log first 5 failures
+                if len(failed) < 5:
+                    yield f"[SKIP] No POS inferred for '{word}'"
+                failed.append((hash_id, word))
+                continue
+        except Exception as e:
+            yield f"[ERROR] Failed to process '{word}': {e}"
             failed.append((hash_id, word))
-            yield f"[SKIP] No POS inferred for '{word}' ({hash_id})."
             continue
 
         # Safe update
