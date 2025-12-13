@@ -10,14 +10,31 @@ import re
 import json
 
 # Download NLTK data if not present
+def ensure_nltk_data():
+    """Ensure NLTK WordNet data is available"""
+    try:
+        import nltk.data
+        nltk.data.find('corpora/wordnet')
+        print("[NLTK] WordNet data already available", flush=True)
+    except LookupError:
+        print("[NLTK] Downloading WordNet data...", flush=True)
+        try:
+            nltk.download('wordnet', quiet=False)
+            nltk.download('omw-1.4', quiet=False)
+            print("[NLTK] WordNet data downloaded successfully", flush=True)
+        except Exception as e:
+            print(f"[NLTK] Warning: Failed to download WordNet: {e}", flush=True)
+            print("[NLTK] Continuing anyway - WordNet features may be limited", flush=True)
+
+# Call at module load
+ensure_nltk_data()
+
+# Import WordNet
 try:
     from nltk.corpus import wordnet as wn
-    wn.synsets('test')  # Test if wordnet is available
-except LookupError:
-    print("Downloading NLTK WordNet data...", flush=True)
-    nltk.download('wordnet', quiet=True)
-    nltk.download('omw-1.4', quiet=True)
-    from nltk.corpus import wordnet as wn
+except Exception as e:
+    print(f"[NLTK] Warning: Could not import WordNet: {e}", flush=True)
+    wn = None
 
 # ───────────────────────────────
 # Initialize OpenAI
@@ -82,21 +99,28 @@ def spacy_detect_pos(word: str) -> List[str]:
 # ════════════════════════════════════════════
 
 def wordnet_detect_pos(word: str) -> List[str]:
-    synsets = wn.synsets(word)
-    pos_set = set()
+    if wn is None:
+        return []
+    
+    try:
+        synsets = wn.synsets(word)
+        pos_set = set()
 
-    for syn in synsets:
-        p = syn.pos()
-        if p == "n":
-            pos_set.add("noun")
-        elif p == "v":
-            pos_set.add("verb")
-        elif p in ("a", "s"):
-            pos_set.add("adjective")
-        elif p == "r":
-            pos_set.add("adverb")
+        for syn in synsets:
+            p = syn.pos()
+            if p == "n":
+                pos_set.add("noun")
+            elif p == "v":
+                pos_set.add("verb")
+            elif p in ("a", "s"):
+                pos_set.add("adjective")
+            elif p == "r":
+                pos_set.add("adverb")
 
-    return list(pos_set)
+        return list(pos_set)
+    except Exception as e:
+        print(f"[WordNet] Error detecting POS for '{word}': {e}", flush=True)
+        return []
 
 
 # ════════════════════════════════════════════

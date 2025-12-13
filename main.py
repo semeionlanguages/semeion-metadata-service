@@ -240,8 +240,18 @@ async def pos_pipeline_endpoint():
 async def pos_background_task(db_conn):
     """Background task for POS pipeline - runs until all entries are processed"""
     try:
+        print("[BACKGROUND-POS] Initializing pipeline...", flush=True)
         sys.path.insert(0, os.path.dirname(__file__))
-        from scripts.generate_pos import run_pos_pipeline
+        
+        # Import with error handling
+        try:
+            from scripts.generate_pos import run_pos_pipeline
+            print("[BACKGROUND-POS] Pipeline module loaded successfully", flush=True)
+        except Exception as import_error:
+            print(f"[BACKGROUND-POS] FATAL: Failed to import pipeline: {import_error}", flush=True)
+            import traceback
+            traceback.print_exc()
+            return
         
         batch_count = 0
         total_processed = 0
@@ -282,11 +292,15 @@ async def pos_background_task(db_conn):
                 # Wait longer before retrying after an error
                 print(f"[BACKGROUND-POS] Waiting 5 seconds before retrying...", flush=True)
                 await asyncio.sleep(5)
+        
+        print("[BACKGROUND-POS] Task completed normally", flush=True)
             
     except Exception as e:
-        print(f"[BACKGROUND-POS] Fatal error: {e}", flush=True)
+        print(f"[BACKGROUND-POS] Fatal error in background task: {e}", flush=True)
         import traceback
         traceback.print_exc()
+    finally:
+        print("[BACKGROUND-POS] Background task exiting", flush=True)
 
 @app.get("/run/register-pipeline/stream")
 async def register_pipeline_stream():
