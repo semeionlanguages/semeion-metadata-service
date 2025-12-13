@@ -5,9 +5,19 @@ import os
 import time
 from typing import Optional, List
 import spacy
-from nltk.corpus import wordnet as wn
+import nltk
 import re
 import json
+
+# Download NLTK data if not present
+try:
+    from nltk.corpus import wordnet as wn
+    wn.synsets('test')  # Test if wordnet is available
+except LookupError:
+    print("Downloading NLTK WordNet data...", flush=True)
+    nltk.download('wordnet', quiet=True)
+    nltk.download('omw-1.4', quiet=True)
+    from nltk.corpus import wordnet as wn
 
 # ───────────────────────────────
 # Initialize OpenAI
