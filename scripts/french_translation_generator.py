@@ -138,7 +138,7 @@ async def run_french_translation_pipeline(conn, batch_size=500):
         SELECT cl.hash_id, cl.en, cl.cat1a, cl.frequency, cl.level
         FROM canonical_lexicon cl
         LEFT JOIN translations_french tf ON cl.hash_id = tf.hash_id
-        WHERE tf.translation IS NULL
+        WHERE tf.translation IS NULL OR tf.translation = ''
         LIMIT %s
     """, (batch_size,))
 
@@ -267,7 +267,7 @@ async def run_french_translation_pipeline_streaming(conn, batch_size=500):
         SELECT cl.hash_id, cl.en, cl.cat1a, cl.frequency, cl.level
         FROM canonical_lexicon cl
         LEFT JOIN translations_french tf ON cl.hash_id = tf.hash_id
-        WHERE tf.translation IS NULL
+        WHERE tf.translation IS NULL OR tf.translation = ''
         LIMIT %s
     """, (batch_size,))
 

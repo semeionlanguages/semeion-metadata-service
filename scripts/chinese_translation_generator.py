@@ -142,7 +142,7 @@ async def run_chinese_translation_pipeline(conn, batch_size=500):
         SELECT cl.hash_id, cl.en, cl.cat1a, cl.frequency, cl.level
         FROM canonical_lexicon cl
         LEFT JOIN translations_chinese tc ON cl.hash_id = tc.hash_id
-        WHERE tc.translation IS NULL
+        WHERE tc.translation IS NULL OR tc.translation = ''
         LIMIT %s
     """, (batch_size,))
 

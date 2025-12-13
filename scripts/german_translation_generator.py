@@ -138,7 +138,7 @@ async def run_german_translation_pipeline(conn, batch_size=500):
         SELECT cl.hash_id, cl.en, cl.cat1a, cl.frequency, cl.level
         FROM canonical_lexicon cl
         LEFT JOIN translations_german tg ON cl.hash_id = tg.hash_id
-        WHERE tg.translation IS NULL
+        WHERE tg.translation IS NULL OR tg.translation = ''
         LIMIT %s
     """, (batch_size,))
 
@@ -267,7 +267,7 @@ async def run_german_translation_pipeline_streaming(conn, batch_size=500):
         SELECT cl.hash_id, cl.en, cl.cat1a, cl.frequency, cl.level
         FROM canonical_lexicon cl
         LEFT JOIN translations_german tg ON cl.hash_id = tg.hash_id
-        WHERE tg.translation IS NULL
+        WHERE tg.translation IS NULL OR tg.translation = ''
         LIMIT %s
     """, (batch_size,))
 
