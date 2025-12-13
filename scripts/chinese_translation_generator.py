@@ -3,6 +3,7 @@ import asyncio
 import re
 from openai import OpenAI
 import os
+from pypinyin import lazy_pinyin, Style
 
 # ───────────────────────────────
 # Initialize OpenAI client
@@ -59,7 +60,6 @@ literal_domains = {
 # ───────────────────────────────
 
 def choose_model(word, cat1, freq, level):
-    """Adaptive model selection based on word characteristics"""
     text = str(word)
     tokens = len(text.split())
     freq = (freq or "").strip().lower()
@@ -91,7 +91,6 @@ def choose_model(word, cat1, freq, level):
 
 
 def build_prompt(word: str, cat1: str, target_lang: str = "Chinese (Simplified)") -> str:
-    """Build translation prompt"""
     return (
         f"Translate the following English word into {target_lang} in its sense related to the semantic domain (category). "
         f"If it is an idiom or short sentence, provide its natural equivalent in {target_lang}. "
@@ -102,7 +101,6 @@ def build_prompt(word: str, cat1: str, target_lang: str = "Chinese (Simplified)"
 
 
 def get_translation(prompt: str, model: str, max_retries: int = 3) -> str:
-    """Call GPT with retry logic"""
     import time
     for attempt in range(max_retries):
         try:
@@ -123,31 +121,35 @@ def get_translation(prompt: str, model: str, max_retries: int = 3) -> str:
     return ""
 
 
+def get_pinyin(chinese_text: str) -> str:
+    """
+    Generate tone-marked pinyin from Chinese text using pypinyin.
+    """
+    if not chinese_text:
+        return None
+    syllables = lazy_pinyin(chinese_text, style=Style.TONE)
+    return " ".join(syllables)
+
+
 # ───────────────────────────────
 # Main Chinese Translation Pipeline
 # ───────────────────────────────
 
 async def run_chinese_translation_pipeline(conn, batch_size=500):
-    """
-    Translates English words to Chinese using adaptive GPT model selection
-    """
     cur = conn.cursor()
 
-    # STEP 1 — fetch entries needing Chinese translation
     cur.execute("""
-        SELECT hash_id, en, cat1a, frequency, level
-        FROM canonical_lexicon
-        WHERE zh IS NULL
+        SELECT cl.hash_id, cl.en, cl.cat1a, cl.frequency, cl.level
+        FROM canonical_lexicon cl
+        LEFT JOIN translations_chinese tc ON cl.hash_id = tc.hash_id
+        WHERE tc.translation IS NULL
         LIMIT %s
     """, (batch_size,))
 
     rows = cur.fetchall()
     total = len(rows)
-
-    # Create job_id for progress tracking
     job_id = str(uuid.uuid4())
 
-    # Early exit: nothing to process
     if total == 0:
         cur.execute("""
             INSERT INTO metadata_progress (job_id, total, processed, status, finished_at)
@@ -155,16 +157,9 @@ async def run_chinese_translation_pipeline(conn, batch_size=500):
         """, (job_id,))
         conn.commit()
         cur.close()
-        
         print("[CHINESE] No entries found. Nothing to process.", flush=True)
-        
-        return {
-            "status": "nothing_to_process",
-            "job_id": job_id,
-            "processed": 0
-        }
+        return {"status": "nothing_to_process", "job_id": job_id, "processed": 0}
 
-    # STEP 2 — create progress row
     cur.execute("""
         INSERT INTO metadata_progress (job_id, total, processed, status)
         VALUES (%s, %s, %s, 'running')
@@ -173,15 +168,11 @@ async def run_chinese_translation_pipeline(conn, batch_size=500):
 
     print(f"[CHINESE] Starting job {job_id}. Total entries: {total}", flush=True)
 
-    # Translation cache
     translation_cache = {}
+    pinyin_cache = {}
 
-    # MAIN LOOP — translate words
     for idx, (hash_id, word, cat1, freq, level) in enumerate(rows, start=1):
-        
-        # Strip "to " prefix safely
         word = re.sub(r"^to\s+", "", word, flags=re.IGNORECASE).strip() if word else ""
-        
         if not word:
             continue
 
@@ -189,13 +180,11 @@ async def run_chinese_translation_pipeline(conn, batch_size=500):
         freq = freq or ""
         level = level or ""
 
-        # Choose model
         model = choose_model(word, cat1, freq, level)
 
         if model == "SKIP":
             translation = word
         else:
-            # Check cache
             key = (word.lower(), cat1.lower())
             if key in translation_cache:
                 translation = translation_cache[key]
@@ -204,33 +193,34 @@ async def run_chinese_translation_pipeline(conn, batch_size=500):
                 translation = get_translation(prompt, model)
                 translation_cache[key] = translation
 
-        # Update canonical_lexicon
-        cur.execute("""
-            UPDATE canonical_lexicon
-            SET zh = %s,
-                updated_at = NOW()
-            WHERE hash_id = %s
-        """, (translation, hash_id))
+        if translation in pinyin_cache:
+            pinyin = pinyin_cache[translation]
+        else:
+            pinyin = get_pinyin(translation)
+            pinyin_cache[translation] = pinyin
 
-        # Batch commit + progress update
+        cur.execute("""
+            INSERT INTO translations_chinese (hash_id, translation, pinyin, word_id)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (hash_id) DO UPDATE
+            SET translation = EXCLUDED.translation,
+                pinyin = EXCLUDED.pinyin
+        """, (hash_id, translation, pinyin, hash_id))
+
         if idx % 25 == 0:
             conn.commit()
-
             cur.execute("""
                 UPDATE metadata_progress
                 SET processed = %s
                 WHERE job_id = %s
             """, (idx, job_id))
             conn.commit()
-
             print(f"[CHINESE] {idx}/{total} processed...", flush=True)
 
         await asyncio.sleep(0)
 
-    # Final commit for leftovers
     conn.commit()
 
-    # STEP 3 — mark job completed
     cur.execute("""
         UPDATE metadata_progress
         SET processed = %s,
@@ -241,128 +231,6 @@ async def run_chinese_translation_pipeline(conn, batch_size=500):
     conn.commit()
 
     cur.close()
-
     print(f"[CHINESE] Job {job_id} DONE.", flush=True)
 
-    return {
-        "status": "ok",
-        "job_id": job_id,
-        "processed": total
-    }
-
-
-# ───────────────────────────────
-# Streaming version for real-time logs
-# ───────────────────────────────
-
-async def run_chinese_translation_pipeline_streaming(conn, batch_size=500):
-    """
-    Generator version that yields log messages in real-time
-    """
-    cur = conn.cursor()
-
-    # STEP 1 — fetch entries needing Chinese translation
-    cur.execute("""
-        SELECT hash_id, en, cat1a, frequency, level
-        FROM canonical_lexicon
-        WHERE zh IS NULL
-        LIMIT %s
-    """, (batch_size,))
-
-    rows = cur.fetchall()
-    total = len(rows)
-
-    # Create job_id for progress tracking
-    job_id = str(uuid.uuid4())
-
-    # Early exit: nothing to process
-    if total == 0:
-        cur.execute("""
-            INSERT INTO metadata_progress (job_id, total, processed, status, finished_at)
-            VALUES (%s, 0, 0, 'complete', NOW())
-        """, (job_id,))
-        conn.commit()
-        cur.close()
-        
-        yield "[CHINESE] No entries found. nothing_to_process"
-        return
-
-    # STEP 2 — create progress row
-    cur.execute("""
-        INSERT INTO metadata_progress (job_id, total, processed, status)
-        VALUES (%s, %s, %s, 'running')
-    """, (job_id, total, 0))
-    conn.commit()
-
-    yield f"[CHINESE] Starting job {job_id}. Total entries: {total}"
-
-    # Translation cache
-    translation_cache = {}
-
-    # MAIN LOOP — translate words
-    for idx, (hash_id, word, cat1, freq, level) in enumerate(rows, start=1):
-        
-        # Strip "to " prefix safely
-        word = re.sub(r"^to\s+", "", word, flags=re.IGNORECASE).strip() if word else ""
-        
-        if not word:
-            continue
-
-        cat1 = cat1 or ""
-        freq = freq or ""
-        level = level or ""
-
-        # Choose model
-        model = choose_model(word, cat1, freq, level)
-
-        if model == "SKIP":
-            translation = word
-        else:
-            # Check cache
-            key = (word.lower(), cat1.lower())
-            if key in translation_cache:
-                translation = translation_cache[key]
-            else:
-                prompt = build_prompt(word, cat1, "Chinese (Simplified)")
-                translation = get_translation(prompt, model)
-                translation_cache[key] = translation
-
-        # Update canonical_lexicon
-        cur.execute("""
-            UPDATE canonical_lexicon
-            SET zh = %s,
-                updated_at = NOW()
-            WHERE hash_id = %s
-        """, (translation, hash_id))
-
-        # Batch commit + progress update
-        if idx % 25 == 0:
-            conn.commit()
-
-            cur.execute("""
-                UPDATE metadata_progress
-                SET processed = %s
-                WHERE job_id = %s
-            """, (idx, job_id))
-            conn.commit()
-
-            yield f"[CHINESE] {idx}/{total} processed..."
-
-        await asyncio.sleep(0)
-
-    # Final commit for leftovers
-    conn.commit()
-
-    # STEP 3 — mark job completed
-    cur.execute("""
-        UPDATE metadata_progress
-        SET processed = %s,
-            status = 'complete',
-            finished_at = NOW()
-        WHERE job_id = %s
-    """, (total, job_id))
-    conn.commit()
-
-    cur.close()
-
-    yield f"[CHINESE] Job {job_id} DONE."
+    return {"status": "ok", "job_id": job_id, "processed": total}

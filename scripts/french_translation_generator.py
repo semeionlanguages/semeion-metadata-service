@@ -135,9 +135,10 @@ async def run_french_translation_pipeline(conn, batch_size=500):
 
     # STEP 1 — fetch entries needing French translation
     cur.execute("""
-        SELECT hash_id, en, cat1a, frequency, level
-        FROM canonical_lexicon
-        WHERE fr IS NULL
+        SELECT cl.hash_id, cl.en, cl.cat1a, cl.frequency, cl.level
+        FROM canonical_lexicon cl
+        LEFT JOIN translations_french tf ON cl.hash_id = tf.hash_id
+        WHERE tf.translation IS NULL
         LIMIT %s
     """, (batch_size,))
 
@@ -204,13 +205,13 @@ async def run_french_translation_pipeline(conn, batch_size=500):
                 translation = get_translation(prompt, model)
                 translation_cache[key] = translation
 
-        # Update canonical_lexicon
+        # Insert into translations_french table
         cur.execute("""
-            UPDATE canonical_lexicon
-            SET fr = %s,
-                updated_at = NOW()
-            WHERE hash_id = %s
-        """, (translation, hash_id))
+            INSERT INTO translations_french (hash_id, translation, word_id)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (hash_id) DO UPDATE
+            SET translation = EXCLUDED.translation
+        """, (hash_id, translation, hash_id))
 
         # Batch commit + progress update
         if idx % 25 == 0:
@@ -263,9 +264,10 @@ async def run_french_translation_pipeline_streaming(conn, batch_size=500):
 
     # STEP 1 — fetch entries needing French translation
     cur.execute("""
-        SELECT hash_id, en, cat1a, frequency, level
-        FROM canonical_lexicon
-        WHERE fr IS NULL
+        SELECT cl.hash_id, cl.en, cl.cat1a, cl.frequency, cl.level
+        FROM canonical_lexicon cl
+        LEFT JOIN translations_french tf ON cl.hash_id = tf.hash_id
+        WHERE tf.translation IS NULL
         LIMIT %s
     """, (batch_size,))
 
@@ -327,13 +329,13 @@ async def run_french_translation_pipeline_streaming(conn, batch_size=500):
                 translation = get_translation(prompt, model)
                 translation_cache[key] = translation
 
-        # Update canonical_lexicon
+        # Insert into translations_french table
         cur.execute("""
-            UPDATE canonical_lexicon
-            SET fr = %s,
-                updated_at = NOW()
-            WHERE hash_id = %s
-        """, (translation, hash_id))
+            INSERT INTO translations_french (hash_id, translation, word_id)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (hash_id) DO UPDATE
+            SET translation = EXCLUDED.translation
+        """, (hash_id, translation, hash_id))
 
         # Batch commit + progress update
         if idx % 25 == 0:
